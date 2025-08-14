@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Snake — Milestone Submission</title>
+  <style>
+    :root {
+      --bg: #0f1220;
+      --panel: #161a2b;
+      --grid: #1e2440;
+      --accent: #6ee7ff;
+      --accent-2: #a78bfa;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: radial-gradient(1200px 800px at 10% -10%, #1d2344 0%, var(--bg) 60%);
+      color: var(--text);
+      display: grid; place-items: center;
+    }
+    .app { width: min(900px, 96vw); }
+    .header { display:flex; align-items:center; justify-content:space-between; gap: 12px; }
+    h1 { font-size: clamp(20px, 4vw, 28px); margin: 16px 0; letter-spacing: 0.5px; }
+    .board-wrap { background: linear-gradient(180deg, #0b0e19 0%, var(--panel) 100%);
+      border: 1px solid #202748; border-radius: 16px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    canvas { width: 100%; height: auto; display:block; background: repeating-linear-gradient(0deg, var(--grid), var(--grid) 4px, transparent 4px, transparent 48px), repeating-linear-gradient(90deg, var(--grid), var(--grid) 4px, transparent 4px, transparent 48px);
+      background-color: #0b1024; border-radius: 12px; border:1px solid #273056;
+    }
+    .controls { display:flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    button { appearance:none; border:none; padding:10px 14px; border-radius: 12px; cursor:pointer; font-weight:600; letter-spacing:.3px;
+      background:#1f2546; color: var(--text); border:1px solid #2a3262; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+      transition: transform .05s ease, filter .2s ease;
+    }
+    button:hover { filter: brightness(1.1); }
+    button:active { transform: translateY(1px); }
+    .primary { background: linear-gradient(180deg, #2b3aa5, #4757d3); border-color:#3948b8; }
+    .danger { background: linear-gradient(180deg, #a5272b, #d34747); border-color:#b83939; }
+    .muted { background: #1a203f; color: #cbd5e1; }
+    .statusbar { display:grid; grid-template-columns: repeat(7, auto); gap: 12px; align-items:center;
+      margin-top: 14px; font-size: 14px; color: var(--muted);
+      background:#0a0f23; border:1px solid #1e274d; border-radius: 12px; padding: 10px 12px;
+    }
+    .chip { padding: 6px 10px; border-radius: 999px; border:1px solid #273156; color:#dbeafe; background:#0b1333; font-weight:600; }
+    .chip.ok { color:#d1fae5; background:#06221a; border-color:#124735; }
+    .chip.warn { color:#fff7ed; background:#261a06; border-color:#5b4514; }
+    .chip.bad { color:#fee2e2; background:#2a0a0a; border-color:#5e1717; }
+    .kbd { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; background:#121735; border:1px solid #273156; padding:2px 6px; border-radius:6px; color:#c7d2fe; }
+    .help { margin-top: 8px; font-size: 13px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <h1>Snake — Milestone Submission (Start • Pause • Next • Trash • Status)</h1>
+    </div>
+
+    <div class="board-wrap">
+      <!-- Drawing Panel -->
+      <canvas id="board" width="720" height="480" aria-label="Snake game board" role="img"></canvas>
+
+      <!-- Controls -->
+      <div class="controls">
+        <button id="btnStart" class="primary">Start</button>
+        <button id="btnPause" class="muted">Pause</button>
+        <button id="btnNext" class="muted">Next</button>
+        <button id="btnClear" class="danger">Trash (Clear)</button>
+      </div>
+
+      <!-- Status Bar -->
+      <div class="statusbar" id="statusbar">
+        <div>State: <span class="chip" id="stState">Idle</span></div>
+        <div>Score: <span class="chip" id="stScore">0</span></div>
+        <div>Length: <span class="chip" id="stLength">0</span></div>
+        <div>Tick: <span class="chip" id="stTick">0</span></div>
+        <div>Speed: <span class="chip" id="stSpeed">8 tps</span></div>
+        <div>Food: <span class="chip" id="stFood">–</span></div>
+        <div>Controls: <span class="kbd">←</span> <span class="kbd">↑</span> <span class="kbd">→</span> <span class="kbd">↓</span></div>
+      </div>
+      <div class="help">Tip: <b>Next</b> pauses the game and advances exactly one step — useful for grading the simulation logic.</div>
+    </div>
+  </div>
+
+  <script>
+    // === Game constants ===
+    const CELL = 24;                   // pixel size per grid cell
+    const COLS = Math.floor(720 / CELL);
+    const ROWS = Math.floor(480 / CELL);
+    const TPS_BASE = 8;                // ticks per second (game speed)
+
+    // === Helpers ===
+    const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+    // === Game state ===
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+
+    const state = {
+      running: false,
+      paused: true,
+      over: false,
+      dir: { x: 1, y: 0 },
+      nextDir: { x: 1, y: 0 },
+      snake: [],
+      food: null,
+      tick: 0,
+      lastStep: 0,
+      tps: TPS_BASE,
+      grewAt: 0,
+    };
+
+    function reset(clearFood = true) {
+      state.running = false;
+      state.paused = true;
+      state.over = false;
+      state.dir = { x: 1, y: 0 };
+      state.nextDir = { x: 1, y: 0 };
+      const startX = Math.floor(COLS / 3);
+      const startY = Math.floor(ROWS / 2);
+      state.snake = [
+        { x: startX - 2, y: startY },
+        { x: startX - 1, y: startY },
+        { x: startX,     y: startY },
+      ];
+      state.food = clearFood ? null : state.food;
+      state.tick = 0;
+      state.lastStep = 0;
+      state.grewAt = 0;
+      spawnFood();
+      draw();
+      updateStatus();
+    }
+
+    function spawnFood() {
+      // Place food not overlapping snake
+      const occupied = new Set(state.snake.map(p => `${p.x},${p.y}`));
+      let fx, fy;
+      do {
+        fx = randInt(0, COLS - 1);
+        fy = randInt(0, ROWS - 1);
+      } while (occupied.has(`${fx},${fy}`));
+      state.food = { x: fx, y: fy };
+    }
+
+    function positionsEqual(a, b) { return a.x === b.x && a.y === b.y; }
+
+    function step() {
+      if (state.over) return;
+      // Apply the nextDir set by input to prevent double-turn in a single tick
+      state.dir = state.nextDir;
+
+      const head = state.snake[state.snake.length - 1];
+      const newHead = { x: head.x + state.dir.x, y: head.y + state.dir.y };
+
+      // Collision with walls -> game over
+      if (newHead.x < 0 || newHead.x >= COLS || newHead.y < 0 || newHead.y >= ROWS) {
+        state.over = true; state.running = false; state.paused = true; updateStatus(); drawGameOver(); return;
+      }
+
+      // Collision with self
+      for (let i = 0; i < state.snake.length; i++) {
+        if (positionsEqual(state.snake[i], newHead)) {
+          state.over = true; state.running = false; state.paused = true; updateStatus(); drawGameOver(); return;
+        }
+      }
+
+      // Move snake
+      state.snake.push(newHead);
+
+      // Eat food?
+      if (positionsEqual(newHead, state.food)) {
+        state.grewAt = state.tick;
+        spawnFood();
+      } else {
+        // Remove tail if not eating
+        state.snake.shift();
+      }
+
+      state.tick++;
+      updateStatus();
+      draw();
+    }
+
+    function drawGrid() {
+      // The CSS background paints grid lines; here we just clear content area.
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function draw() {
+      drawGrid();
+      // Draw food
+      if (state.food) {
+        drawCell(state.food.x, state.food.y, '#f8fafc');
+      }
+      // Draw snake
+      for (let i = 0; i < state.snake.length; i++) {
+        const seg = state.snake[i];
+        const isHead = i === state.snake.length - 1;
+        drawCell(seg.x, seg.y, isHead ? '#6ee7ff' : '#a78bfa');
+      }
+      if (state.over) drawGameOver();
+    }
+
+    function drawCell(cx, cy, color) {
+      const x = cx * CELL + 2;
+      const y = cy * CELL + 2;
+      const size = CELL - 4;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      const r = 6;
+      roundRect(ctx, x, y, size, size, r);
+      ctx.fill();
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    function drawGameOver() {
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = '#0b0e19';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 36px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto';
+      ctx.textAlign = 'center';
+      ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 8);
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '16px ui-sans-serif, system-ui';
+      ctx.fillText('Press Start to play again • Use arrow keys to move', canvas.width / 2, canvas.height / 2 + 20);
+    }
+
+    // === Status Bar ===
+    const stState = document.getElementById('stState');
+    const stScore = document.getElementById('stScore');
+    const stLength = document.getElementById('stLength');
+    const stTick = document.getElementById('stTick');
+    const stSpeed = document.getElementById('stSpeed');
+    const stFood = document.getElementById('stFood');
+
+    function updateStatus() {
+      let label = 'Idle'; let cls = 'chip';
+      if (state.over) { label = 'Game Over'; cls = 'chip bad'; }
+      else if (state.running && !state.paused) { label = 'Running'; cls = 'chip ok'; }
+      else if (state.paused) { label = 'Paused'; cls = 'chip warn'; }
+      stState.className = cls; stState.textContent = label;
+      const score = Math.max(0, state.snake.length - 3); // base length is 3
+      stScore.textContent = score;
+      stLength.textContent = state.snake.length;
+      stTick.textContent = state.tick;
+      stSpeed.textContent = `${state.tps} tps`;
+      stFood.textContent = state.food ? `${state.food.x},${state.food.y}` : '–';
+    }
+
+    // === Controls ===
+    const btnStart = document.getElementById('btnStart');
+    const btnPause = document.getElementById('btnPause');
+    const btnNext  = document.getElementById('btnNext');
+    const btnClear = document.getElementById('btnClear');
+
+    btnStart.addEventListener('click', () => {
+      if (state.over) reset(false);
+      state.running = true; state.paused = false; updateStatus();
+    });
+
+    btnPause.addEventListener('click', () => {
+      if (!state.running && !state.over) state.running = true;
+      state.paused = true; updateStatus();
+    });
+
+    btnNext.addEventListener('click', () => {
+      // Next advances one generation only when paused
+      if (!state.running) state.running = true;
+      const wasPaused = state.paused;
+      state.paused = true; // force paused
+      step(); // advance exactly one tick
+      state.paused = true; // remain paused after single step
+      updateStatus();
+    });
+
+    btnClear.addEventListener('click', () => {
+      // Trash (Clear) -> fully reset board and stop the game
+      reset();
+    });
+
+    // Keyboard controls (arrows)
+    window.addEventListener('keydown', (e) => {
+      const key = e.key;
+      const { x, y } = state.dir;
+      if (key === 'ArrowUp'    && y !== 1)  state.nextDir = { x: 0, y: -1 };
+      if (key === 'ArrowDown'  && y !== -1) state.nextDir = { x: 0, y: 1 };
+      if (key === 'ArrowLeft'  && x !== 1)  state.nextDir = { x: -1, y: 0 };
+      if (key === 'ArrowRight' && x !== -1) state.nextDir = { x: 1, y: 0 };
+      if (key.toLowerCase() === 'p') { state.paused = !state.paused; updateStatus(); }
+      if (key.toLowerCase() === 'n') { btnNext.click(); }
+      if (key.toLowerCase() === 'r') { reset(); }
+    });
+
+    // === Main loop ===
+    function loop(ts) {
+      requestAnimationFrame(loop);
+      if (!state.running || state.paused || state.over) return;
+      const interval = 1000 / state.tps;
+      if (ts - state.lastStep >= interval) {
+        state.lastStep = ts;
+        step();
+      }
+    }
+
+    // boot
+    reset();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
